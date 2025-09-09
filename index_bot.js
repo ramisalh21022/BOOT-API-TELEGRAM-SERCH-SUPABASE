@@ -1,4 +1,6 @@
 // index_bot.js
+const clientsCache = new Map(); // لتخزين chatId => clientId
+
 const express = require('express');
 const bodyParser = require('body-parser');
 const TelegramBot = require('node-telegram-bot-api');
@@ -116,6 +118,7 @@ app.listen(PORT, async () => {
     console.error("❌ Error setting webhook:", err.message);
   }
 })
+
 
 
 
