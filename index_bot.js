@@ -40,17 +40,17 @@ bot.on('message', async (msg) => {
 
     // إرسال النتائج
     for (const product of products) {
-      const caption = `🛒 *${product.product_name}*\n📦 ${product.category}\n💵 ${product.price} ل.س`;
-      if (product.image_url) {
-        await bot.sendPhoto(chatId, product.image_url, { caption, parse_mode: 'Markdown' });
-      } else {
-        await bot.sendMessage(chatId, caption, { parse_mode: 'Markdown' });
-      }
+            const caption = `🛒 *${product.product_name}*\n📦 ${product.category}\n💵 ${product.price} ل.س`;
+            if (product.image_url) {
+                await bot.sendPhoto(chatId, product.image_url, { caption, parse_mode: 'Markdown' });
+            } else {
+                await bot.sendMessage(chatId, caption, { parse_mode: 'Markdown' });
+            }
+        }
+    } catch (err) {
+        console.error("Bot Axios error:", err.response?.data || err.message);
+        bot.sendMessage(chatId, "⚠️ حدث خطأ في البحث، حاول لاحقًا.");
     }
-  } catch (err) {
-    console.error(err.message);
-    bot.sendMessage(chatId, "⚠️ حدث خطأ في البحث، حاول لاحقًا.");
-  }
 });
 
 // تشغيل السيرفر
