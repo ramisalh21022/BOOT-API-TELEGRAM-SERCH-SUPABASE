@@ -28,21 +28,38 @@ bot.on('message', async (msg) => {
 
     try {
 
-       // 👤 تسجيل العميل تلقائياً (أول مرة)
-    const client = {
-      store_name: `عميل_${chatId}`,
-      owner_name: `${msg.from.first_name || ''} ${msg.from.last_name || ''}`.trim() || "غير معروف",
-      phone: msg.from.username ? `@${msg.from.username}` : `tg_${chatId}`,
-      address: "غير محدد"
-    };
+      let clientId = clientsCache.get(chatId);
 
-    const clientRes = await axios.post(`${API_URL}/clients`, client);
-    const clientId = clientRes.data.id;
+    if (!clientId) {
+      // تسجيل العميل
+      const client = {
+        store_name: `عميل_${chatId}`,
+        owner_name: `${msg.from.first_name || ''} ${msg.from.last_name || ''}`.trim() || "غير معروف",
+        phone: msg.from.username ? `@${msg.from.username}` : `tg_${chatId}`,
+        address: "غير محدد"
+      };
 
-    // رسالة ترحيب للعميل الجديد
-    if (clientRes.data && clientRes.data.created_at) {
-      await bot.sendMessage(chatId, `👋 أهلا ${client.owner_name || "عميل"}، تم تسجيلك معنا بنجاح!`);
+      let clientRes;
+      try {
+        clientRes = await axios.post(`${API_URL}/clients`, client);
+      } catch (err) {
+        if (err.response?.status === 409) {
+          // العميل موجود مسبقاً
+          clientRes = await axios.get(`${API_URL}/clients/byPhone/${client.phone}`);
+        } else {
+          throw err;
+        }
+      }
+
+      clientId = clientRes.data.id;
+      clientsCache.set(chatId, clientId);
+
+      // رسالة ترحيب للعميل الجديد فقط
+      if (clientRes.data && clientRes.data.created_at) {
+        await bot.sendMessage(chatId, `👋 أهلا ${client.owner_name || "عميل"}، تم تسجيلك معنا بنجاح!`);
+      }
     }
+
       
         const response = await axios.get(`${API_URL}/products/search?keyword=${encodeURIComponent(keyword)}`);
         const products = response.data;
@@ -76,8 +93,18 @@ bot.on('callback_query', async (callbackQuery) => {
     if (data.startsWith('order_')) {
         const productId = parseInt(data.split('_')[1]);
         try {
-            const clientRes = await axios.post(`${API_URL}/clients`, { telegram_id: chatId });
-            const clientId = clientRes.data.id;
+
+          let clientId = clientsCache.get(chatId);
+
+      if (!clientId) {
+        // لو ما كان مخزن بالذاكرة نجيب العميل من API
+        const phone = `tg_${chatId}`;
+        const clientRes = await axios.get(`${API_URL}/clients/byPhone/${phone}`);
+        clientId = clientRes.data.id;
+        clientsCache.set(chatId, clientId);
+      }
+
+           
             const orderRes = await axios.post(`${API_URL}/orders/init`, { client_id: clientId });
             const orderId = orderRes.data.id;
             await axios.post(`${API_URL}/order_items`, { order_id: orderId, product_id: productId, quantity: 1 });
@@ -85,9 +112,10 @@ bot.on('callback_query', async (callbackQuery) => {
             await bot.sendMessage(chatId, `✅ تم إضافة المنتج إلى طلبك بنجاح.`);
             bot.answerCallbackQuery(callbackQuery.id);
           await bot.sendMessage(
-        chatId,
-        `🎉 تم تسجيل طلبك بنجاح!\n📦 رقم الطلب: ${order.id}\n👤 العميل: ${query.from.first_name || "غير معروف"}\n📱 الهاتف: ${query.from.username ? '@' + query.from.username : "غير متوفر"}\n🚚 سيتم التواصل معك لتوصيل الطلب.`
-      );
+  chatId,
+  `🎉 تم تسجيل طلبك بنجاح!\n📦 رقم الطلب: ${orderId}\n👤 العميل: ${callbackQuery.from.first_name || "غير معروف"}\n📱 الهاتف: ${callbackQuery.from.username ? '@' + callbackQuery.from.username : "غير متوفر"}\n🚚 سيتم التواصل معك لتوصيل الطلب.`
+);
+
         } catch (err) {
             console.error(err.response?.data || err.message);
             bot.sendMessage(chatId, "⚠️ حدث خطأ أثناء تسجيل الطلب، حاول لاحقًا.");
@@ -107,4 +135,5 @@ app.listen(PORT, async () => {
     console.error("❌ Error setting webhook:", err.message);
   }
 })
+
 
