@@ -30,36 +30,17 @@ bot.on('message', async (msg) => {
 
       let clientId = clientsCache.get(chatId);
 
-    if (!clientId) {
-      // تسجيل العميل
-      const client = {
-        store_name: `عميل_${chatId}`,
-        owner_name: `${msg.from.first_name || ''} ${msg.from.last_name || ''}`.trim() || "غير معروف",
-        phone: msg.from.username ? `@${msg.from.username}` : `tg_${chatId}`,
-        address: "غير محدد"
-      };
+   if (!clientId) {
+  // تسجيل العميل
+  const clientRes = await axios.post(`${API_URL}/clients`, client);
+  clientId = clientRes.data.id;
+  clientsCache.set(chatId, clientId);
 
-      let clientRes;
-      try {
-        clientRes = await axios.post(`${API_URL}/clients`, client);
-      } catch (err) {
-        if (err.response?.status === 409) {
-          // العميل موجود مسبقاً
-          clientRes = await axios.get(`${API_URL}/clients/byPhone/${client.phone}`);
-        } else {
-          throw err;
-        }
-      }
-
-      clientId = clientRes.data.id;
-      clientsCache.set(chatId, clientId);
-
-      // رسالة ترحيب للعميل الجديد فقط
-      if (clientRes.data && clientRes.data.created_at) {
-        await bot.sendMessage(chatId, `👋 أهلا ${client.owner_name || "عميل"}، تم تسجيلك معنا بنجاح!`);
-      }
-    }
-
+  // رسالة ترحيب للعميل الجديد
+  if (clientRes.data && clientRes.data.created_at) {
+    await bot.sendMessage(chatId, `👋 أهلا ${client.owner_name || "عميل"}، تم تسجيلك معنا بنجاح!`);
+  }
+}
       
         const response = await axios.get(`${API_URL}/products/search?keyword=${encodeURIComponent(keyword)}`);
         const products = response.data;
@@ -135,5 +116,6 @@ app.listen(PORT, async () => {
     console.error("❌ Error setting webhook:", err.message);
   }
 })
+
 
 
