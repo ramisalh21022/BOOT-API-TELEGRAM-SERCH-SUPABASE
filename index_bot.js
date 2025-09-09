@@ -1,67 +1,94 @@
-// index_bot.js
 const express = require('express');
 const bodyParser = require('body-parser');
 const TelegramBot = require('node-telegram-bot-api');
 const axios = require('axios');
 
 const TOKEN = process.env.TELEGRAM_TOKEN;
-const API_URL = process.env.API_URL || 'https://YOUR-API-SERVICE.onrender.com';
+const API_URL = process.env.API_URL;                  
 const PORT = process.env.PORT || 5000;
+const EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL;
 
-// إنشاء بوت بدون polling
 const bot = new TelegramBot(TOKEN, { polling: false });
 
-// إنشاء تطبيق Express
 const app = express();
 app.use(bodyParser.json());
 
-// استقبال التحديثات من Telegram عبر Webhook
+// Webhook endpoint
 app.post(`/webhook/${TOKEN}`, (req, res) => {
-  bot.processUpdate(req.body);
-  res.sendStatus(200);
+    bot.processUpdate(req.body);
+    res.sendStatus(200);
 });
 
 // التعامل مع الرسائل
 bot.on('message', async (msg) => {
-  const chatId = msg.chat.id;
-  const keyword = msg.text?.trim();
+    const chatId = msg.chat.id;
+    const keyword = msg.text?.trim();
 
-  if (!keyword) {
-    return bot.sendMessage(chatId, "أرسل كلمة للبحث 🔍 مثال: سكر");
-  }
+    if (!keyword) return bot.sendMessage(chatId, "أرسل كلمة للبحث 🔍 مثال: سكر");
 
-  try {
-    const response = await axios.get(`${API_URL}/products/search?keyword=${encodeURIComponent(keyword)}`);
-    const products = response.data;
+    try {
+        const response = await axios.get(`${API_URL}/products/search?keyword=${encodeURIComponent(keyword)}`);
+        const products = response.data;
 
-    if (products.length === 0) {
-      return bot.sendMessage(chatId, `🚫 لا يوجد نتائج لكلمة: ${keyword}`);
-    }
-
-    // إرسال النتائج
-    for (const product of products) {
-            const caption = `🛒 *${product.product_name}*\n📦 ${product.category}\n💵 ${product.price} ل.س`;
-            if (product.image_url) {
-                await bot.sendPhoto(chatId, product.image_url, { caption, parse_mode: 'Markdown' });
-            } else {
-                await bot.sendMessage(chatId, caption, { parse_mode: 'Markdown' });
-            }
+        if (products.length === 0) {
+            return bot.sendMessage(chatId, `🚫 لا يوجد نتائج لكلمة: ${keyword}`);
         }
+
+        // تحضير رسالة واحدة لكل المنتجات
+        let messageText = `🔎 نتائج البحث عن: *${keyword}*\n\n`;
+        const inlineKeyboard = [];
+
+        products.forEach((product, index) => {
+            messageText += `🛒 *${product.product_name}*\n📦 ${product.category}\n💵 ${product.price} ل.س\n\n`;
+
+            // زر لكل منتج
+            inlineKeyboard.push([{
+                text: `اطلب الآن: ${product.product_name}`,
+                callback_data: `order_${product.id}`
+            }]);
+        });
+
+        // إرسال الصورة الأولى كمثال مع النص (أو يمكن حذف الصورة)
+        const firstProduct = products[0];
+        if (firstProduct.image_url) {
+            await bot.sendPhoto(chatId, firstProduct.image_url, {
+                caption: messageText,
+                parse_mode: 'Markdown',
+                reply_markup: { inline_keyboard: inlineKeyboard }
+            });
+        } else {
+            await bot.sendMessage(chatId, messageText, {
+                parse_mode: 'Markdown',
+                reply_markup: { inline_keyboard: inlineKeyboard }
+            });
+        }
+
     } catch (err) {
         console.error("Bot Axios error:", err.response?.data || err.message);
         bot.sendMessage(chatId, "⚠️ حدث خطأ في البحث، حاول لاحقًا.");
     }
 });
 
-// تشغيل السيرفر
-app.listen(PORT, async () => {
-  console.log(`🚀 Server running on port ${PORT}`);
+// التعامل مع أزرار اختيار المستخدم
+bot.on('callback_query', async (callbackQuery) => {
+    const msg = callbackQuery.message;
+    const data = callbackQuery.data;
 
-  const webhookUrl = `${process.env.RENDER_EXTERNAL_URL}/webhook/${TOKEN}`;
-  try {
-    await bot.setWebHook(webhookUrl);
-    console.log(`✅ Webhook set to: ${webhookUrl}`);
-  } catch (err) {
-    console.error("❌ Error setting webhook:", err.message);
-  }
+    if (data.startsWith('order_')) {
+        const productId = data.split('_')[1];
+        await bot.sendMessage(msg.chat.id, `✅ تم اختيار المنتج رقم ${productId} للطلب. سيتم التواصل لاحقًا.`);
+        bot.answerCallbackQuery(callbackQuery.id); // لإغلاق الانتظار على الزر
+    }
+});
+
+// تشغيل السيرفر وضبط Webhook
+app.listen(PORT, async () => {
+    console.log(`Bot Server running on port ${PORT}`);
+    try {
+        const webhookUrl = `${EXTERNAL_URL}/webhook/${TOKEN}`;
+        await bot.setWebHook(webhookUrl);
+        console.log(`✅ Webhook set to: ${webhookUrl}`);
+    } catch (err) {
+        console.error("❌ Error setting webhook:", err.message);
+    }
 });
