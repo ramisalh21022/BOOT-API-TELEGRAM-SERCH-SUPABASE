@@ -27,7 +27,11 @@ bot.on('message', async (msg) => {
     const chatId = msg.chat.id;
     const keyword = msg.text?.trim();
     if (!keyword) return bot.sendMessage(chatId, "أرسل كلمة للبحث 🔍 مثال: سكر");
-
+const client = {
+  store_name: `عميل_${chatId}`,
+  owner_name: `${msg.from.first_name || ''} ${msg.from.last_name || ''}`.trim() || "غير معروف",
+  phone: msg.from.username ? `@${msg.from.username}` : `tg_${chatId}`,
+  address: "غير محدد"
     try {
 
       let clientId = clientsCache.get(chatId);
@@ -118,6 +122,7 @@ app.listen(PORT, async () => {
     console.error("❌ Error setting webhook:", err.message);
   }
 })
+
 
 
 
