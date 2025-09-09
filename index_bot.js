@@ -30,42 +30,35 @@ bot.on('message', async (msg) => {
   const keyword = msg.text?.trim();
   if (!keyword) return bot.sendMessage(chatId, "أرسل كلمة للبحث 🔍 مثال: سكر");
 
-  try {
-    // تحضير بيانات العميل
-    const clientData = {
-      store_name: `عميل_${chatId}`,
-      owner_name: `${msg.from.first_name || ''} ${msg.from.last_name || ''}`.trim() || "غير معروف",
-      phone: msg.from.username ? `@${msg.from.username}` : `tg_${chatId}`,
-      address: "غير محدد"
-    };
+  // تحضير معلومات العميل
+  const client = {
+    store_name: `Client-${chatId}`,
+    owner_name: `${msg.from.first_name || ''} ${msg.from.last_name || ''}`.trim() || "غير معروف",
+    phone: `${chatId}`,  // استخدم chatId كرقم فريد للزبون
+    address: "غير محدد"
+  };
 
-    // التحقق من العميل في الـ Cache أو تسجيله
-    let clientId = clientsCache.get(chatId);
-    if (!clientId) {
-      let clientRes;
-      try {
-        clientRes = await axios.post(`${API_URL}/clients`, clientData);
-      } catch (err) {
-        // إذا العميل موجود مسبقًا
-        if (err.response?.status === 409) {
-          clientRes = await axios.get(`${API_URL}/clients/byPhone/${clientData.phone}`);
-        } else {
-          throw err;
-        }
-      }
+  try {
+    let clientId;
+
+    try {
+      // محاولة إضافة العميل أو الحصول على العميل الموجود مسبقًا
+      const clientRes = await axios.post(`${API_URL}/clients`, client);
       clientId = clientRes.data.id;
-      clientsCache.set(chatId, clientId);
+
+      // رسالة ترحيب دائمًا
+      await bot.sendMessage(chatId, `👋 أهلا ${client.owner_name || "عميل"}، مرحبًا بك في متجرنا!`);
+
+    } catch (err) {
+      console.error("Client Registration Error:", err.response?.data || err.message);
+      return bot.sendMessage(chatId, "⚠️ حدث خطأ أثناء تسجيل العميل، حاول لاحقًا.");
     }
 
-    // رسالة ترحيب دائمًا
-    await bot.sendMessage(chatId, `👋 أهلا ${clientData.owner_name || "عميل"}، مرحبًا بك في متجرنا!`);
-
-    // البحث عن المنتجات
+    // بعد ذلك يتم البحث عن المنتجات وإرسالها كما في كودك الحالي
     const response = await axios.get(`${API_URL}/products/search?keyword=${encodeURIComponent(keyword)}`);
     const products = response.data;
     if (!products.length) return bot.sendMessage(chatId, `🚫 لا يوجد نتائج لكلمة: ${keyword}`);
 
-    // إرسال كل منتج بصورة مستقلة مع زر "اطلب الآن"
     for (const product of products) {
       const caption = `🛒 *${product.product_name}*\n📦 ${product.category}\n💵 ${product.price} ل.س`;
       const inlineKeyboard = [[{ text: `اطلب الآن`, callback_data: `order_${product.id}` }]];
@@ -128,3 +121,4 @@ app.listen(PORT, async () => {
     console.error("❌ Error setting webhook:", err.message);
   }
 });
+
