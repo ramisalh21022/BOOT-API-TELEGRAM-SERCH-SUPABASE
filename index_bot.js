@@ -27,6 +27,23 @@ bot.on('message', async (msg) => {
     if (!keyword) return bot.sendMessage(chatId, "أرسل كلمة للبحث 🔍 مثال: سكر");
 
     try {
+
+       // 👤 تسجيل العميل تلقائياً (أول مرة)
+    const client = {
+      store_name: `عميل_${chatId}`,
+      owner_name: `${msg.from.first_name || ''} ${msg.from.last_name || ''}`.trim() || "غير معروف",
+      phone: msg.from.username ? `@${msg.from.username}` : `tg_${chatId}`,
+      address: "غير محدد"
+    };
+
+    const clientRes = await axios.post(`${API_URL}/clients`, client);
+    const clientId = clientRes.data.id;
+
+    // رسالة ترحيب للعميل الجديد
+    if (clientRes.data && clientRes.data.created_at) {
+      await bot.sendMessage(chatId, `👋 أهلا ${client.owner_name || "عميل"}، تم تسجيلك معنا بنجاح!`);
+    }
+      
         const response = await axios.get(`${API_URL}/products/search?keyword=${encodeURIComponent(keyword)}`);
         const products = response.data;
         if (!products.length) return bot.sendMessage(chatId, `🚫 لا يوجد نتائج لكلمة: ${keyword}`);
@@ -67,6 +84,10 @@ bot.on('callback_query', async (callbackQuery) => {
 
             await bot.sendMessage(chatId, `✅ تم إضافة المنتج إلى طلبك بنجاح.`);
             bot.answerCallbackQuery(callbackQuery.id);
+          await bot.sendMessage(
+        chatId,
+        `🎉 تم تسجيل طلبك بنجاح!\n📦 رقم الطلب: ${order.id}\n👤 العميل: ${query.from.first_name || "غير معروف"}\n📱 الهاتف: ${query.from.username ? '@' + query.from.username : "غير متوفر"}\n🚚 سيتم التواصل معك لتوصيل الطلب.`
+      );
         } catch (err) {
             console.error(err.response?.data || err.message);
             bot.sendMessage(chatId, "⚠️ حدث خطأ أثناء تسجيل الطلب، حاول لاحقًا.");
@@ -86,3 +107,4 @@ app.listen(PORT, async () => {
     console.error("❌ Error setting webhook:", err.message);
   }
 })
+
