@@ -5,8 +5,13 @@ const TelegramBot = require('node-telegram-bot-api');
 const axios = require('axios');
 
 const TOKEN = process.env.TELEGRAM_TOKEN;
-const API_URL = process.env.API_URL || 'https://YOUR-API-SERVICE.onrender.com';
+const API_URL = process.env.API_URL; // رابط API الخاص بك على Render
 const PORT = process.env.PORT || 5000;
+
+if (!TOKEN || !API_URL) {
+  console.error("❌ يجب تحديد TELEGRAM_TOKEN و API_URL في المتغيرات البيئية!");
+  process.exit(1);
+}
 
 // إنشاء بوت بدون polling
 const bot = new TelegramBot(TOKEN, { polling: false });
@@ -21,15 +26,14 @@ app.post(`/webhook/${TOKEN}`, (req, res) => {
   res.sendStatus(200);
 });
 
-// تخزين مؤقت للـ clientId لكل chatId
+// cache لتخزين clientId لكل chatId
 const clientsCache = new Map();
 
-bot.on('message', async (msg) => {
-  const chatId = msg.chat.id;
-  const keyword = msg.text?.trim();
-  if (!keyword) return bot.sendMessage(chatId, "أرسل كلمة للبحث 🔍 مثال: سكر");
+// دالة لتسجيل العميل أو جلبه إذا موجود مسبقًا
+async function getClientId(chatId, msg) {
+  let clientId = clientsCache.get(chatId);
+  if (clientId) return clientId;
 
-  // تحضير معلومات العميل
   const client = {
     store_name: `عميل_${chatId}`,
     owner_name: `${msg.from.first_name || ''} ${msg.from.last_name || ''}`.trim() || "غير معروف",
@@ -38,28 +42,35 @@ bot.on('message', async (msg) => {
   };
 
   try {
-    let clientId = clientsCache.get(chatId);
-
-    if (!clientId) {
-      // تحقق إذا العميل موجود مسبقًا
-      let clientRes;
-      try {
-        clientRes = await axios.post(`${API_URL}/clients`, client);
-      } catch (err) {
-        if (err.response?.status === 409) {
-          // العميل موجود مسبقًا، نجلبه
-          clientRes = await axios.get(`${API_URL}/clients/byPhone/${client.phone}`);
-        } else {
-          throw err;
-        }
-      }
-
-      clientId = clientRes.data.id;
-      clientsCache.set(chatId, clientId);
+    // التحقق إذا موجود
+    const checkRes = await axios.get(`${API_URL}/clients?phone=eq.${client.phone}`);
+    if (checkRes.data.length > 0) {
+      clientId = checkRes.data[0].id;
+    } else {
+      const createRes = await axios.post(`${API_URL}/clients`, client);
+      clientId = createRes.data.id;
     }
 
-    // رسالة ترحيب دائمًا
-    await bot.sendMessage(chatId, `👋 أهلا ${client.owner_name || "عميل"}، مرحبًا بك في متجرنا!`);
+    clientsCache.set(chatId, clientId);
+    return clientId;
+  } catch (err) {
+    console.error("Error fetching/creating client:", err.response?.data || err.message);
+    throw new Error("حدث خطأ أثناء تسجيل العميل.");
+  }
+}
+
+// التعامل مع الرسائل
+bot.on('message', async (msg) => {
+  const chatId = msg.chat.id;
+  const keyword = msg.text?.trim();
+  if (!keyword) return bot.sendMessage(chatId, "أرسل كلمة للبحث 🔍 مثال: سكر");
+
+  try {
+    // تسجيل العميل أو جلبه
+    const clientId = await getClientId(chatId, msg);
+
+    // الترحيب بالعميل
+    await bot.sendMessage(chatId, `👋 أهلا ${msg.from.first_name || "عميل"}، مرحبًا بك في متجرنا!`);
 
     // البحث عن المنتجات
     const response = await axios.get(`${API_URL}/products/search?keyword=${encodeURIComponent(keyword)}`);
@@ -84,7 +95,6 @@ bot.on('message', async (msg) => {
         });
       }
     }
-
   } catch (err) {
     console.error(err.response?.data || err.message);
     bot.sendMessage(chatId, "⚠️ حدث خطأ في البحث، حاول لاحقًا.");
@@ -97,26 +107,29 @@ bot.on('callback_query', async (callbackQuery) => {
   const chatId = msg.chat.id;
   const data = callbackQuery.data;
 
-  if (data.startsWith('order_')) {
-    const productId = parseInt(data.split('_')[1]);
+  if (!data.startsWith('order_')) return;
 
-    try {
-      const clientId = clientsCache.get(chatId);
-      if (!clientId) throw new Error("Client not found in cache");
+  const productId = parseInt(data.split('_')[1]);
 
-      const orderRes = await axios.post(`${API_URL}/orders/init`, { client_id: clientId });
-      const orderId = orderRes.data.id;
+  try {
+    const clientId = clientsCache.get(chatId);
+    if (!clientId) throw new Error("Client not found in cache");
 
-      await axios.post(`${API_URL}/order_items`, { order_id: orderId, product_id: productId, quantity: 1 });
+    // إنشاء الطلب
+    const orderRes = await axios.post(`${API_URL}/orders/init`, { client_id: clientId });
+    const orderId = orderRes.data.id;
 
-      await bot.sendMessage(chatId, `✅ تم إضافة المنتج إلى طلبك بنجاح.\n🎉 رقم الطلب: ${orderId}\n🚚 سيتم التواصل معك للتوصيل.`);
+    // إضافة المنتج للطلب
+    await axios.post(`${API_URL}/order_items`, { order_id: orderId, product_id: productId, quantity: 1 });
 
-      bot.answerCallbackQuery(callbackQuery.id);
-    } catch (err) {
-      console.error(err.response?.data || err.message);
-      bot.sendMessage(chatId, "⚠️ حدث خطأ أثناء تسجيل الطلب، حاول لاحقًا.");
-      bot.answerCallbackQuery(callbackQuery.id);
-    }
+    await bot.sendMessage(chatId,
+      `✅ تم إضافة المنتج إلى طلبك بنجاح.\n🎉 رقم الطلب: ${orderId}\n🚚 سيتم التواصل معك للتوصيل.`);
+
+    bot.answerCallbackQuery(callbackQuery.id);
+  } catch (err) {
+    console.error(err.response?.data || err.message);
+    bot.sendMessage(chatId, "⚠️ حدث خطأ أثناء تسجيل الطلب، حاول لاحقًا.");
+    bot.answerCallbackQuery(callbackQuery.id);
   }
 });
 
