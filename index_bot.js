@@ -34,43 +34,57 @@ async function getClientId(chatId, msg) {
   let clientId = clientsCache.get(chatId);
   if (clientId) return clientId;
 
-  const client = {
-    store_name: `عميل_${chatId}`,
-    owner_name: `${msg.from.first_name || ''} ${msg.from.last_name || ''}`.trim() || "غير معروف",
-    phone: msg.from.username ? `@${msg.from.username}` : `tg_${chatId}`,
-    address: "غير محدد"
-  };
+  bot.on('message', async (msg) => {
+    const chatId = msg.chat.id;
+    const keyword = msg.text?.trim();
+    if (!keyword) return bot.sendMessage(chatId, "أرسل كلمة للبحث 🔍 مثال: سكر");
 
-  try {
-    // التحقق إذا موجود
-    const checkRes = await axios.get(`${API_URL}/clients?phone=eq.${client.phone}`);
-    if (checkRes.data.length > 0) {
-      clientId = checkRes.data[0].id;
-    } else {
-      const createRes = await axios.post(`${API_URL}/clients`, client);
-      clientId = createRes.data.id;
-    }
+    // تحضير معلومات العميل
+    const client = {
+        store_name: `عميل_${chatId}`,
+        owner_name: `${msg.from.first_name || ''} ${msg.from.last_name || ''}`.trim() || "غير معروف",
+        phone: msg.from.username ? `@${msg.from.username}` : `tg_${chatId}`,
+        address: "غير محدد"
+    };
 
-    clientsCache.set(chatId, clientId);
-    return clientId;
-  } catch (err) {
-    console.error("Error fetching/creating client:", err.response?.data || err.message);
-    throw new Error("حدث خطأ أثناء تسجيل العميل.");
-  }
-}
+    try {
+        let clientId = clientsCache.get(chatId);
 
-// التعامل مع الرسائل
-bot.on('message', async (msg) => {
-  const chatId = msg.chat.id;
-  const keyword = msg.text?.trim();
-  if (!keyword) return bot.sendMessage(chatId, "أرسل كلمة للبحث 🔍 مثال: سكر");
+        if (!clientId) {
+            // محاولة تسجيل العميل
+            let clientRes;
+            try {
+                clientRes = await axios.post(`${API_URL}/clients`, client, {
+                    headers: { 'Content-Type': 'application/json' }
+                });
+            } catch (err) {
+                // التحقق إذا الاستجابة ليست JSON
+                if (err.response && err.response.headers['content-type']?.includes('text/html')) {
+                    console.error("❌ API /clients أعاد HTML بدل JSON. تحقق من API_URL أو endpoint!");
+                    await bot.sendMessage(chatId, "⚠️ حدث خطأ في التواصل مع خدمة العملاء، حاول لاحقًا.");
+                    return;
+                }
 
-  try {
-    // تسجيل العميل أو جلبه
-    const clientId = await getClientId(chatId, msg);
+                if (err.response?.status === 409) {
+                    // العميل موجود مسبقاً، نجلبه
+                    clientRes = await axios.get(`${API_URL}/clients/byPhone/${client.phone}`);
+                } else {
+                    throw err;
+                }
+            }
 
-    // الترحيب بالعميل
-    await bot.sendMessage(chatId, `👋 أهلا ${msg.from.first_name || "عميل"}، مرحبًا بك في متجرنا!`);
+            if (!clientRes || !clientRes.data) {
+                console.error("❌ لم يتم استرجاع بيانات العميل من API");
+                await bot.sendMessage(chatId, "⚠️ حدث خطأ أثناء تسجيل العميل، حاول لاحقًا.");
+                return;
+            }
+
+            clientId = clientRes.data.id;
+            clientsCache.set(chatId, clientId);
+        }
+
+        // رسالة ترحيب دائمًا
+        await bot.sendMessage(chatId, `👋 أهلا ${client.owner_name || "عميل"}، مرحبًا بك في متجرنا!`);
 
     // البحث عن المنتجات
     const response = await axios.get(`${API_URL}/products/search?keyword=${encodeURIComponent(keyword)}`);
@@ -145,3 +159,4 @@ app.listen(PORT, async () => {
     console.error("❌ Error setting webhook:", err.message);
   }
 });
+
