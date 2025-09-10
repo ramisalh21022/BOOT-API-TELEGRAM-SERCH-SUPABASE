@@ -69,22 +69,26 @@ bot.on('message', async (msg) => {
     if (!products.length) return bot.sendMessage(chatId, `🚫 لا يوجد نتائج لكلمة: ${keyword}`);
 
     for (const product of products) {
-      const caption = `🛒 *${product.product_name}*\n📦 ${product.category}\n💵 ${product.price} ل.س`;
-      const inlineKeyboard = [[{ text: `اطلب الآن`, callback_data: `order_${product.id}` }]];
+  const caption = `🛒 *${product.product_name}*\n📦 ${product.category}\n💵 ${product.price} ل.س`;
+  const inlineKeyboard = [[{ text: `اطلب الآن`, callback_data: `order_${product.id}` }]];
 
-      if (product.image_url) {
-        await bot.sendPhoto(chatId, product.image_url, {
-          caption,
-          parse_mode: 'Markdown',
-          reply_markup: { inline_keyboard: inlineKeyboard }
-        });
-      } else {
-        await bot.sendMessage(chatId, caption, {
-          parse_mode: 'Markdown',
-          reply_markup: { inline_keyboard: inlineKeyboard }
-        });
-      }
-    }
+  if (product.image_url) {
+    await bot.sendPhoto(chatId, product.image_url, {
+      caption,
+      parse_mode: 'Markdown',
+      reply_markup: { inline_keyboard: inlineKeyboard }
+    });
+  } else {
+    await bot.sendMessage(chatId, caption, {
+      parse_mode: 'Markdown',
+      reply_markup: { inline_keyboard: inlineKeyboard }
+    });
+  }
+
+  // 👇 تأخير 1 ثانية بين كل رسالة لتفادي Too Many Requests
+  await new Promise(resolve => setTimeout(resolve, 1000));
+}
+
 
   } catch (err) {
     console.error(err.response?.data || err.message);
@@ -133,3 +137,4 @@ app.listen(PORT, async () => {
     console.error("❌ Error setting webhook:", err.message);
   }
 });
+
