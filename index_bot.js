@@ -4,67 +4,99 @@ const TelegramBot = require('node-telegram-bot-api');
 const axios = require('axios');
 
 const TOKEN = process.env.TELEGRAM_TOKEN;
-const API_URL = process.env.API_URL || 'https://YOUR-API-SERVICE.onrender.com';
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_KEY = process.env.SUPABASE_KEY;
 const PORT = process.env.PORT || 5000;
 
-// إنشاء بوت بدون polling
 const bot = new TelegramBot(TOKEN, { polling: false });
-
-// إنشاء تطبيق Express
 const app = express();
 app.use(bodyParser.json());
 
-// استقبال التحديثات من Telegram عبر Webhook
+// clients cache
+const clientsCache = new Map();
+
+// webhook endpoint
 app.post(`/webhook/${TOKEN}`, (req, res) => {
   bot.processUpdate(req.body);
   res.sendStatus(200);
 });
 
-// تخزين مؤقت للـ clientId و الطلبات
-const clientsCache = new Map();
+// تسجيل العميل أو جلبه إذا موجود
+const getOrCreateClient = async (chatId, msg) => {
+  let clientId = clientsCache.get(chatId);
+  if (clientId) return clientId;
 
-// موزع (جروب أو مستخدم)
-const distributorChatId = "963933210196";
+  const phone = msg.from.username ? `@${msg.from.username}` : `tg_${chatId}`;
+  const owner_name = `${msg.from.first_name || ''} ${msg.from.last_name || ''}`.trim() || 'غير معروف';
+  const store_name = `Client-${chatId}`;
 
-// استقبال الرسائل
+  // تحقق إذا موجود
+  const check = await axios.get(`${SUPABASE_URL}/rest/v1/clients?phone=eq.${phone}`, {
+    headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
+  });
+
+  let client;
+  if (check.data.length > 0) {
+    client = check.data[0];
+  } else {
+    // إنشاء جديد
+    const response = await axios.post(`${SUPABASE_URL}/rest/v1/clients`, {
+      phone, owner_name, store_name, address: null
+    }, {
+      headers: {
+        'apikey': SUPABASE_KEY,
+        'Authorization': `Bearer ${SUPABASE_KEY}`,
+        'Content-Type': 'application/json',
+        'Prefer': 'return=representation'
+      }
+    });
+    client = response.data[0];
+  }
+
+  clientsCache.set(chatId, client);
+  return client;
+};
+
+// استقبال رسائل
 bot.on('message', async (msg) => {
   const chatId = msg.chat.id;
   const keyword = msg.text?.trim();
-  if (!keyword) return bot.sendMessage(chatId, "أرسل كلمة للبحث 🔍 مثال: سكر");
 
   try {
-    // تحضير معلومات العميل
-    const client = {
-      store_name: `عميل_${chatId}`,
-      owner_name: `${msg.from.first_name || ''} ${msg.from.last_name || ''}`.trim() || "غير معروف",
-      phone: msg.from.username ? `@${msg.from.username}` : `tg_${chatId}`,
-      address: "غير محدد"
-    };
+    const client = await getOrCreateClient(chatId, msg);
 
-    let clientData = clientsCache.get(chatId);
+    // رسالة الترحيب
+    await bot.sendMessage(chatId, `👋 أهلا ${client.owner_name}، مرحبًا بك في متجرنا!`);
 
-    if (!clientData) {
-      // تسجيل العميل أو جلبه إذا موجود
-      const clientRes = await axios.post(`${API_URL}/clients`, client);
-      clientData = {
-        clientId: clientRes.data.id,
-        chatId,
-        owner_name: client.owner_name,
-        phone: client.phone
-      };
-      clientsCache.set(chatId, clientData);
+    // إذا كانت الرسالة مشاركة رقم الهاتف
+    if (msg.contact?.phone_number) {
+      // تحديث رقم الهاتف مباشرة في Supabase
+      const response = await axios.patch(
+        `${SUPABASE_URL}/rest/v1/clients?id=eq.${client.id}`,
+        { phone: msg.contact.phone_number },
+        {
+          headers: {
+            'apikey': SUPABASE_KEY,
+            'Authorization': `Bearer ${SUPABASE_KEY}`,
+            'Content-Type': 'application/json',
+            'Prefer': 'return=representation'
+          }
+        }
+      );
+      const updatedClient = response.data[0];
+      clientsCache.set(chatId, updatedClient);
+      await bot.sendMessage(chatId, `✅ تم تحديث رقم الهاتف بنجاح: ${updatedClient.phone}`);
+      return;
     }
 
-    // رسالة ترحيب دائمًا
-    await bot.sendMessage(chatId, `👋 أهلا ${clientData.owner_name}، مرحبًا بك في متجرنا!`);
+    if (!keyword) return bot.sendMessage(chatId, "أرسل كلمة للبحث 🔍 مثال: سكر");
 
     // البحث عن المنتجات
-    const response = await axios.get(`${API_URL}/products/search?keyword=${encodeURIComponent(keyword)}`);
+    const response = await axios.get(`${SUPABASE_URL}/rest/v1/products?product_name=ilike.%${keyword}%`, {
+      headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
+    });
     const products = response.data;
-
-    if (!products.length) {
-      return bot.sendMessage(chatId, `🚫 لا يوجد نتائج لكلمة: ${keyword}`);
-    }
+    if (!products.length) return bot.sendMessage(chatId, `🚫 لا يوجد نتائج لكلمة: ${keyword}`);
 
     for (const product of products) {
       const caption = `🛒 *${product.product_name}*\n📦 ${product.category}\n💵 ${product.price} ل.س`;
@@ -83,15 +115,23 @@ bot.on('message', async (msg) => {
         });
       }
 
-      await new Promise(resolve => setTimeout(resolve, 800)); // منع Too Many Requests
+      await new Promise(r => setTimeout(r, 800)); // لتفادي Too Many Requests
     }
+
+    // إرسال زر مشاركة رقم الهاتف
+    const shareButton = {
+      text: "مشاركة رقم الهاتف",
+      request_contact: true
+    };
+    await bot.sendMessage(chatId, "📱 لتأكيد طلبك يرجى مشاركة رقم هاتفك:", {
+      reply_markup: { keyboard: [[shareButton]], one_time_keyboard: true }
+    });
 
   } catch (err) {
     console.error(err.response?.data || err.message);
-    bot.sendMessage(chatId, "⚠️ حدث خطأ في البحث، حاول لاحقًا.");
+    bot.sendMessage(chatId, "⚠️ حدث خطأ، حاول لاحقًا.");
   }
 });
-
 
 // التعامل مع الضغط على زر "اطلب الآن"
 bot.on('callback_query', async (callbackQuery) => {
@@ -100,67 +140,43 @@ bot.on('callback_query', async (callbackQuery) => {
   const data = callbackQuery.data;
 
   if (data.startsWith('order_')) {
-    const productId = parseInt(data.split('_')[1]);
-
     try {
-      const clientData = clientsCache.get(chatId);
-      if (!clientData) throw new Error("Client not found in cache");
+      const productId = parseInt(data.split('_')[1]);
+      const client = clientsCache.get(chatId);
+      if (!client) throw new Error("Client not found in cache");
 
-      const orderRes = await axios.post(`${API_URL}/orders/init`, { client_id: clientData.clientId });
-      const orderId = orderRes.data.id;
+      // إنشاء الطلب
+      const orderRes = await axios.post(`${SUPABASE_URL}/rest/v1/orders`, {
+        client_id: client.id, status: "pending"
+      }, {
+        headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json', 'Prefer': 'return=representation' }
+      });
+      const order = orderRes.data[0];
 
-      await axios.post(`${API_URL}/order_items`, { order_id: orderId, product_id: productId, quantity: 1 });
-
-      // زر لتأكيد الطلب
-      await bot.sendMessage(
-        chatId,
-        `✅ تم إضافة المنتج إلى طلبك.\n🎉 رقم الطلب: ${orderId}\n👤 ${clientData.owner_name}\n📱 ${clientData.phone}\n\nالرجاء تأكيد الطلب:`,
-        {
-          reply_markup: {
-            inline_keyboard: [[{ text: "تأكيد الطلب ✅", callback_data: `confirm_${orderId}` }]]
-          }
-        }
-      );
-
-      bot.answerCallbackQuery(callbackQuery.id);
-    } catch (err) {
-      console.error(err.response?.data || err.message);
-      bot.sendMessage(chatId, "⚠️ حدث خطأ أثناء تسجيل الطلب، حاول لاحقًا.");
-      bot.answerCallbackQuery(callbackQuery.id);
-    }
-  }
-
-  // تأكيد الطلب
-  if (data.startsWith('confirm_')) {
-    const orderId = parseInt(data.split('_')[1]);
-    try {
-      const clientData = clientsCache.get(chatId);
-      if (!clientData) throw new Error("Client not found in cache");
-
-      // تحديث رقم الهاتف (ثابت أو من مشاركة رقم مستقبلاً)
-      const fixedPhone = "+963933210196";
-      await axios.patch(`${API_URL}/clients/updatePhone`, {
-        id: clientData.clientId,
-        phone: fixedPhone
+      // إضافة المنتج للطلب
+      await axios.post(`${SUPABASE_URL}/rest/v1/order_items`, {
+        order_id: order.id, product_id: productId, quantity: 1
+      }, {
+        headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json' }
       });
 
-      await bot.sendMessage(
-        chatId,
-        `✅ تم تأكيد طلبك بنجاح.\n🎉 رقم الطلب: ${orderId}\n👤 ${clientData.owner_name}\n📱 هاتفك: ${fixedPhone}\n🚚 سيتم التواصل معك قريبًا.`
+      await bot.sendMessage(chatId,
+        `✅ تم إضافة المنتج إلى طلبك بنجاح.\n🎉 رقم الطلب: ${order.id}\n👤 العميل: ${client.owner_name}\n📱 الهاتف: ${client.phone}\n🚚 سيتم التواصل معك للتوصيل.`
       );
 
       bot.answerCallbackQuery(callbackQuery.id);
+
     } catch (err) {
       console.error(err.response?.data || err.message);
-      bot.sendMessage(chatId, "⚠️ حدث خطأ أثناء تأكيد الطلب.");
+      bot.sendMessage(chatId, "⚠️ حدث خطأ أثناء تأكيد الطلب، حاول لاحقًا.");
       bot.answerCallbackQuery(callbackQuery.id);
     }
   }
 });
+
 // تشغيل السيرفر
 app.listen(PORT, async () => {
   console.log(`🚀 Server running on port ${PORT}`);
-
   const webhookUrl = `${process.env.RENDER_EXTERNAL_URL}/webhook/${TOKEN}`;
   try {
     await bot.setWebHook(webhookUrl);
@@ -169,4 +185,3 @@ app.listen(PORT, async () => {
     console.error("❌ Error setting webhook:", err.message);
   }
 });
-
