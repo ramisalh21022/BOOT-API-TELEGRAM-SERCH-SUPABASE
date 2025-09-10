@@ -21,10 +21,9 @@ app.post(`/webhook/${TOKEN}`, (req, res) => {
   res.sendStatus(200);
 });
 
-// تخزين مؤقت للـ clientId لكل chatId لتقليل الطلبات
+// تخزين مؤقت للـ client لكل chatId
 const clientsCache = new Map();
 
-// استقبال رسائل المستخدم
 bot.on('message', async (msg) => {
   const chatId = msg.chat.id;
   const keyword = msg.text?.trim();
@@ -39,17 +38,17 @@ bot.on('message', async (msg) => {
       address: "غير محدد"
     };
 
-    let clientId = clientsCache.get(chatId);
+    let clientData = clientsCache.get(chatId);
 
-    if (!clientId) {
+    if (!clientData) {
       // تسجيل العميل أو جلبه إذا موجود
       const clientRes = await axios.post(`${API_URL}/clients`, client);
-      clientId = clientRes.data.id;
-      clientsCache.set(chatId, clientId);
+      clientData = clientRes.data;
+      clientsCache.set(chatId, clientData); // تخزين الكائن الكامل
     }
 
-    // رسالة ترحيب دائمًا بالاسم الحقيقي
-    await bot.sendMessage(chatId, `👋 أهلا ${client.owner_name}، مرحبًا بك في متجرنا!`);
+    // رسالة ترحيب دائمًا
+    await bot.sendMessage(chatId, `👋 أهلا ${client.owner_name || "عميل"}، مرحبًا بك في متجرنا!`);
 
     // البحث عن المنتجات
     const response = await axios.get(`${API_URL}/products/search?keyword=${encodeURIComponent(keyword)}`);
@@ -59,6 +58,7 @@ bot.on('message', async (msg) => {
       return bot.sendMessage(chatId, `🚫 لا يوجد نتائج لكلمة: ${keyword}`);
     }
 
+    // عرض المنتجات مع زر "اطلب الآن"
     for (const product of products) {
       const caption = `🛒 *${product.product_name}*\n📦 ${product.category}\n💵 ${product.price} ل.س`;
       const inlineKeyboard = [[{ text: `اطلب الآن`, callback_data: `order_${product.id}` }]];
@@ -96,27 +96,28 @@ bot.on('callback_query', async (callbackQuery) => {
     const productId = parseInt(data.split('_')[1]);
 
     try {
-      // جلب بيانات العميل كاملة من الـ Supabase باستخدام phone
-      const phone = msg.from.username ? `@${msg.from.username}` : `tg_${chatId}`;
-      const clientRes = await axios.get(`${API_URL}/clients?phone=${encodeURIComponent(phone)}`);
-      const clientData = clientRes.data; // كائن العميل
+      const clientData = clientsCache.get(chatId);
+      if (!clientData) throw new Error("Client not found in cache");
 
-      if (!clientData || !clientData.id) throw new Error("Client not found");
-
-      // إنشاء طلب
+      // إنشاء طلب جديد
       const orderRes = await axios.post(`${API_URL}/orders/init`, { client_id: clientData.id });
       const orderId = orderRes.data.id;
 
       // إضافة المنتج للطلب
       await axios.post(`${API_URL}/order_items`, { order_id: orderId, product_id: productId, quantity: 1 });
 
-      // رسالة تأكيد الطلب مع الاسم الحقيقي ورقم الهاتف
+      // رسالة تأكيد الطلب بالاسم الحقيقي ورقم الهاتف
       await bot.sendMessage(
         chatId,
-        `✅ تم إضافة المنتج إلى طلبك بنجاح.\n🎉 رقم الطلب: ${orderId}\n👤 العميل: ${clientData.owner_name}\n📱 الهاتف: ${clientData.phone}\n🚚 سيتم التواصل معك للتوصيل.`
+        `✅ تم إضافة المنتج إلى طلبك بنجاح.
+🎉 رقم الطلب: ${orderId}
+👤 العميل: ${clientData.owner_name}
+📱 الهاتف: ${clientData.phone}
+🚚 سيتم التواصل معك للتوصيل.`
       );
 
       bot.answerCallbackQuery(callbackQuery.id);
+
     } catch (err) {
       console.error(err.response?.data || err.message);
       bot.sendMessage(chatId, "⚠️ حدث خطأ أثناء تسجيل الطلب، حاول لاحقًا.");
