@@ -24,13 +24,14 @@ app.post(`/webhook/${TOKEN}`, (req, res) => {
 // تخزين مؤقت للـ clientId لكل chatId لتقليل الطلبات
 const clientsCache = new Map();
 
+// استقبال رسائل المستخدم
 bot.on('message', async (msg) => {
   const chatId = msg.chat.id;
   const keyword = msg.text?.trim();
   if (!keyword) return bot.sendMessage(chatId, "أرسل كلمة للبحث 🔍 مثال: سكر");
 
   try {
-    // تحضير معلومات العميل
+    // تحضير معلومات العميل من Telegram
     const client = {
       store_name: `عميل_${chatId}`,
       owner_name: `${msg.from.first_name || ''} ${msg.from.last_name || ''}`.trim() || "غير معروف",
@@ -47,8 +48,8 @@ bot.on('message', async (msg) => {
       clientsCache.set(chatId, clientId);
     }
 
-    // رسالة ترحيب دائمًا
-    await bot.sendMessage(chatId, `👋 أهلا ${client.owner_name || "عميل"}، مرحبًاظظ بك في متجرنا!`);
+    // رسالة ترحيب دائمًا بالاسم الحقيقي
+    await bot.sendMessage(chatId, `👋 أهلا ${client.owner_name}، مرحبًا بك في متجرنا!`);
 
     // البحث عن المنتجات
     const response = await axios.get(`${API_URL}/products/search?keyword=${encodeURIComponent(keyword)}`);
@@ -95,17 +96,24 @@ bot.on('callback_query', async (callbackQuery) => {
     const productId = parseInt(data.split('_')[1]);
 
     try {
-      const clientId = clientsCache.get(chatId);
-      if (!clientId) throw new Error("Client not found in cache");
+      // جلب بيانات العميل كاملة من الـ Supabase باستخدام phone
+      const phone = msg.from.username ? `@${msg.from.username}` : `tg_${chatId}`;
+      const clientRes = await axios.get(`${API_URL}/clients?phone=${encodeURIComponent(phone)}`);
+      const clientData = clientRes.data; // كائن العميل
 
-      const orderRes = await axios.post(`${API_URL}/orders/init`, { client_id: clientId });
+      if (!clientData || !clientData.id) throw new Error("Client not found");
+
+      // إنشاء طلب
+      const orderRes = await axios.post(`${API_URL}/orders/init`, { client_id: clientData.id });
       const orderId = orderRes.data.id;
 
+      // إضافة المنتج للطلب
       await axios.post(`${API_URL}/order_items`, { order_id: orderId, product_id: productId, quantity: 1 });
 
+      // رسالة تأكيد الطلب مع الاسم الحقيقي ورقم الهاتف
       await bot.sendMessage(
         chatId,
-        `✅ تم إضافة المنتج إلى طلبك بنجاح.\n🎉 رقم الطلب: ${orderId}\n👤 العميل: ${clientId.owner_name}\n📱 الهاتف: ${clientId.phone}\n🚚 سيتم التواصل معك للتوصيل.`
+        `✅ تم إضافة المنتج إلى طلبك بنجاح.\n🎉 رقم الطلب: ${orderId}\n👤 العميل: ${clientData.owner_name}\n📱 الهاتف: ${clientData.phone}\n🚚 سيتم التواصل معك للتوصيل.`
       );
 
       bot.answerCallbackQuery(callbackQuery.id);
