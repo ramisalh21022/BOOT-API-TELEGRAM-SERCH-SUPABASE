@@ -26,47 +26,58 @@ const clientsCache = new Map();
 
 bot.on('message', async (msg) => {
   const chatId = msg.chat.id;
+
+  // التحقق إذا كانت الرسالة تحتوي على رقم الهاتف (contact)
+  if (msg.contact) {
+    const phone = msg.contact.phone_number;
+
+    // تحديث رقم الهاتف في قاعدة البيانات
+    try {
+      const clientId = clientsCache.get(chatId);
+      if (clientId) {
+        await axios.patch(`${API_URL}/clients/${clientId}`, { phone });
+        await bot.sendMessage(chatId, `📱 تم تسجيل رقم هاتفك: ${phone}`);
+      }
+    } catch (err) {
+      console.error(err.response?.data || err.message);
+      bot.sendMessage(chatId, "⚠️ حدث خطأ أثناء حفظ رقم الهاتف.");
+    }
+    return;
+  }
+
   const keyword = msg.text?.trim();
   if (!keyword) return bot.sendMessage(chatId, "أرسل كلمة للبحث 🔍 مثال: سكر");
 
   try {
-    // تحضير معلومات العميل مع البيانات الحقيقية قدر الإمكان
+    // تحضير معلومات العميل
     const client = {
-      store_name: `Client_${chatId}`,
-      owner_name: `${msg.from.first_name || ''} ${msg.from.last_name || ''}`.trim() || "عميل غير معروف",
-      phone: msg.contact?.phone_number || msg.from.username ? `@${msg.from.username}` : `tg_${chatId}`,
+      store_name: `عميل_${chatId}`,
+      owner_name: `${msg.from.first_name || ''} ${msg.from.last_name || ''}`.trim() || "غير معروف",
+      phone: null, // رقم الهاتف سيُسجل عند الضغط على الزر
       address: "غير محدد"
     };
 
-    let clientData = clientsCache.get(chatId);
-
-    if (!clientData) {
-      // تسجيل العميل أو جلبه إذا موجود مسبقًا
-      let clientRes;
-      try {
-        clientRes = await axios.post(`${API_URL}/clients`, client);
-      } catch (err) {
-        if (err.response?.status === 409) {
-          // العميل موجود مسبقًا، نجلب بياناته
-          clientRes = await axios.get(`${API_URL}/clients/byPhone/${encodeURIComponent(client.phone)}`);
-        } else {
-          throw err;
-        }
-      }
-      clientData = clientRes.data;
-      clientsCache.set(chatId, clientData);
+    let clientId = clientsCache.get(chatId);
+    if (!clientId) {
+      // تسجيل العميل أو جلبه إذا موجود
+      const clientRes = await axios.post(`${API_URL}/clients`, client);
+      clientId = clientRes.data.id;
+      clientsCache.set(chatId, clientId);
     }
 
-    // رسالة ترحيب دائمًا
-    await bot.sendMessage(chatId, `👋 أهلا ${clientData.owner_name || "عميل"}، مرحبًا بك في متجرنا!`);
+    // رسالة ترحيب بالاسم الحقيقي
+    await bot.sendMessage(chatId, `👋 أهلا ${client.owner_name}، مرحبًا بك في متجرنا!`, {
+      reply_markup: {
+        keyboard: [[{ text: "شارك رقم هاتفك 📱", request_contact: true }]],
+        one_time_keyboard: true
+      }
+    });
 
     // البحث عن المنتجات
     const response = await axios.get(`${API_URL}/products/search?keyword=${encodeURIComponent(keyword)}`);
     const products = response.data;
 
-    if (!products.length) {
-      return bot.sendMessage(chatId, `🚫 لا يوجد نتائج لكلمة: ${keyword}`);
-    }
+    if (!products.length) return bot.sendMessage(chatId, `🚫 لا يوجد نتائج لكلمة: ${keyword}`);
 
     for (const product of products) {
       const caption = `🛒 *${product.product_name}*\n📦 ${product.category}\n💵 ${product.price} ل.س`;
@@ -139,3 +150,4 @@ app.listen(PORT, async () => {
     console.error("❌ Error setting webhook:", err.message);
   }
 });
+
