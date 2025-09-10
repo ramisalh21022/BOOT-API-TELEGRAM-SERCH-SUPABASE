@@ -48,7 +48,7 @@ bot.on('message', async (msg) => {
     }
 
     // رسالة ترحيب دائمًا
-    await bot.sendMessage(chatId, `👋 أهلا ${client.owner_name || "عميل"}، مرحبًا بك في متجرنا!`);
+    await bot.sendMessage(chatId, `👋 أهلا ${client.owner_name || "عميل"}، مرحبًاظظ بك في متجرنا!`);
 
     // البحث عن المنتجات
     const response = await axios.get(`${API_URL}/products/search?keyword=${encodeURIComponent(keyword)}`);
@@ -126,3 +126,4 @@ app.listen(PORT, async () => {
     console.error("❌ Error setting webhook:", err.message);
   }
 });
+
