@@ -1,5 +1,4 @@
 // index_bot.js
-
 const express = require('express');
 const bodyParser = require('body-parser');
 const TelegramBot = require('node-telegram-bot-api');
@@ -22,7 +21,7 @@ app.post(`/webhook/${TOKEN}`, (req, res) => {
   res.sendStatus(200);
 });
 
-// تخزين مؤقت للـ clientId لكل chatId
+// تخزين مؤقت للـ clientId لكل chatId لتقليل الطلبات
 const clientsCache = new Map();
 
 bot.on('message', async (msg) => {
@@ -30,31 +29,20 @@ bot.on('message', async (msg) => {
   const keyword = msg.text?.trim();
   if (!keyword) return bot.sendMessage(chatId, "أرسل كلمة للبحث 🔍 مثال: سكر");
 
-  // تحضير معلومات العميل
-  const client = {
-    store_name: `عميل_${chatId}`,
-    owner_name: `${msg.from.first_name || ''} ${msg.from.last_name || ''}`.trim() || "غير معروف",
-    phone: msg.from.username ? `@${msg.from.username}` : `tg_${chatId}`,
-    address: "غير محدد"
-  };
-
   try {
+    // تحضير معلومات العميل
+    const client = {
+      store_name: `عميل_${chatId}`,
+      owner_name: `${msg.from.first_name || ''} ${msg.from.last_name || ''}`.trim() || "غير معروف",
+      phone: msg.from.username ? `@${msg.from.username}` : `tg_${chatId}`,
+      address: "غير محدد"
+    };
+
     let clientId = clientsCache.get(chatId);
 
     if (!clientId) {
-      // تحقق إذا العميل موجود مسبقًا
-      let clientRes;
-      try {
-        clientRes = await axios.post(`${API_URL}/clients`, client);
-      } catch (err) {
-        if (err.response?.status === 409) {
-          // العميل موجود مسبقًا، نجلبه
-          clientRes = await axios.get(`${API_URL}/clients/byPhone/${client.phone}`);
-        } else {
-          throw err;
-        }
-      }
-
+      // تسجيل العميل أو جلبه إذا موجود
+      const clientRes = await axios.post(`${API_URL}/clients`, client);
       clientId = clientRes.data.id;
       clientsCache.set(chatId, clientId);
     }
@@ -66,29 +54,30 @@ bot.on('message', async (msg) => {
     const response = await axios.get(`${API_URL}/products/search?keyword=${encodeURIComponent(keyword)}`);
     const products = response.data;
 
-    if (!products.length) return bot.sendMessage(chatId, `🚫 لا يوجد نتائج لكلمة: ${keyword}`);
+    if (!products.length) {
+      return bot.sendMessage(chatId, `🚫 لا يوجد نتائج لكلمة: ${keyword}`);
+    }
 
     for (const product of products) {
-  const caption = `🛒 *${product.product_name}*\n📦 ${product.category}\n💵 ${product.price} ل.س`;
-  const inlineKeyboard = [[{ text: `اطلب الآن`, callback_data: `order_${product.id}` }]];
+      const caption = `🛒 *${product.product_name}*\n📦 ${product.category}\n💵 ${product.price} ل.س`;
+      const inlineKeyboard = [[{ text: `اطلب الآن`, callback_data: `order_${product.id}` }]];
 
-  if (product.image_url) {
-    await bot.sendPhoto(chatId, product.image_url, {
-      caption,
-      parse_mode: 'Markdown',
-      reply_markup: { inline_keyboard: inlineKeyboard }
-    });
-  } else {
-    await bot.sendMessage(chatId, caption, {
-      parse_mode: 'Markdown',
-      reply_markup: { inline_keyboard: inlineKeyboard }
-    });
-  }
+      if (product.image_url) {
+        await bot.sendPhoto(chatId, product.image_url, {
+          caption,
+          parse_mode: 'Markdown',
+          reply_markup: { inline_keyboard: inlineKeyboard }
+        });
+      } else {
+        await bot.sendMessage(chatId, caption, {
+          parse_mode: 'Markdown',
+          reply_markup: { inline_keyboard: inlineKeyboard }
+        });
+      }
 
-  // 👇 تأخير 1 ثانية بين كل رسالة لتفادي Too Many Requests
-  await new Promise(resolve => setTimeout(resolve, 1000));
-}
-
+      // تأخير بسيط لتفادي Too Many Requests
+      await new Promise(resolve => setTimeout(resolve, 800));
+    }
 
   } catch (err) {
     console.error(err.response?.data || err.message);
@@ -137,4 +126,3 @@ app.listen(PORT, async () => {
     console.error("❌ Error setting webhook:", err.message);
   }
 });
-
