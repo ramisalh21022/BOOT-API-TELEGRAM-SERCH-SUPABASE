@@ -1,3 +1,10 @@
+const express = require('express');
+const bodyParser = require('body-parser');
+const TelegramBot = require('node-telegram-bot-api');
+const axios = require('axios');
+
+
+const PORT = process.env.PORT || 5000;
 import TelegramBot from "node-telegram-bot-api";
 import axios from "axios";
 
@@ -124,3 +131,4 @@ bot.on("callback_query", async (callbackQuery) => {
     await bot.sendMessage(chatId, "⚠️ حدث خطأ أثناء تنفيذ العملية.");
   }
 });
+
