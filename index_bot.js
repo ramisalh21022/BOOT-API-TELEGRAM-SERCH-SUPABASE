@@ -1,19 +1,19 @@
+// index_bot.js
 const express = require('express');
 const bodyParser = require('body-parser');
 const TelegramBot = require('node-telegram-bot-api');
 const axios = require('axios');
 
-
+const TOKEN = process.env.TELEGRAM_TOKEN;
+const API_URL = process.env.API_URL || 'https://YOUR-API-SERVICE.onrender.com';
 const PORT = process.env.PORT || 5000;
-import TelegramBot from "node-telegram-bot-api";
-import axios from "axios";
 
-// 📌 متغيرات البيئة
-const TOKEN = process.env.BOT_TOKEN;
-const API_URL = process.env.API_URL || "http://localhost:3000";
+// إنشاء بوت بدون polling
+const bot = new TelegramBot(TOKEN, { polling: false });
 
-const bot = new TelegramBot(TOKEN, { polling: true });
-
+// إنشاء تطبيق Express
+const app = express();
+app.use(bodyParser.json());
 // ✨ الترحيب
 bot.onText(/\/start/, async (msg) => {
   const chatId = msg.chat.id;
@@ -131,4 +131,5 @@ bot.on("callback_query", async (callbackQuery) => {
     await bot.sendMessage(chatId, "⚠️ حدث خطأ أثناء تنفيذ العملية.");
   }
 });
+
 
