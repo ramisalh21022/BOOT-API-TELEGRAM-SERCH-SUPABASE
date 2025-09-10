@@ -132,4 +132,16 @@ bot.on("callback_query", async (callbackQuery) => {
   }
 });
 
+// تشغيل السيرفر
+app.listen(PORT, async () => {
+  console.log(`🚀 Server running on port ${PORT}`);
+
+  const webhookUrl = `${process.env.RENDER_EXTERNAL_URL}/webhook/${TOKEN}`;
+  try {
+    await bot.setWebHook(webhookUrl);
+    console.log(`✅ Webhook set to: ${webhookUrl}`);
+  } catch (err) {
+    console.error("❌ Error setting webhook:", err.message);
+  }
+})
 
