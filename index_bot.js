@@ -30,14 +30,10 @@ const distributorChatId = "963933210196";
 bot.on('message', async (msg) => {
   const chatId = msg.chat.id;
   const keyword = msg.text?.trim();
-
-  // تجاهل رسالة مشاركة الهاتف (معالجتها بمكان آخر)
-  if (msg.contact) return;
-
   if (!keyword) return bot.sendMessage(chatId, "أرسل كلمة للبحث 🔍 مثال: سكر");
 
   try {
-    // تحضير بيانات العميل بالاسم الحقيقي
+    // تحضير معلومات العميل
     const client = {
       store_name: `عميل_${chatId}`,
       owner_name: `${msg.from.first_name || ''} ${msg.from.last_name || ''}`.trim() || "غير معروف",
@@ -45,17 +41,22 @@ bot.on('message', async (msg) => {
       address: "غير محدد"
     };
 
-    let clientId = clientsCache.get(chatId);
+    let clientData = clientsCache.get(chatId);
 
-    if (!clientId) {
+    if (!clientData) {
+      // تسجيل العميل أو جلبه إذا موجود
       const clientRes = await axios.post(`${API_URL}/clients`, client);
-      clientId = clientRes.data.id;
-      clientsCache.set(chatId, clientId);
-      clientsCache.set(`${chatId}_client`, clientRes.data); // نخزن البيانات كاملة
+      clientData = {
+        clientId: clientRes.data.id,
+        chatId,
+        owner_name: client.owner_name,
+        phone: client.phone
+      };
+      clientsCache.set(chatId, clientData);
     }
 
     // رسالة ترحيب دائمًا
-    await bot.sendMessage(chatId, `👋 أهلا ${client.owner_name || "عميل"}، مرحبًا بك في متجرنا!`);
+    await bot.sendMessage(chatId, `👋 أهلا ${clientData.owner_name}، مرحبًا بك في متجرنا!`);
 
     // البحث عن المنتجات
     const response = await axios.get(`${API_URL}/products/search?keyword=${encodeURIComponent(keyword)}`);
@@ -91,7 +92,8 @@ bot.on('message', async (msg) => {
   }
 });
 
-// عند الضغط على "اطلب الآن"
+
+// التعامل مع الضغط على زر "اطلب الآن"
 bot.on('callback_query', async (callbackQuery) => {
   const msg = callbackQuery.message;
   const chatId = msg.chat.id;
@@ -101,25 +103,24 @@ bot.on('callback_query', async (callbackQuery) => {
     const productId = parseInt(data.split('_')[1]);
 
     try {
-      const clientId = clientsCache.get(chatId);
-      if (!clientId) throw new Error("Client not found in cache");
+      const clientData = clientsCache.get(chatId);
+      if (!clientData) throw new Error("Client not found in cache");
 
-      const orderRes = await axios.post(`${API_URL}/orders/init`, { client_id: clientId });
+      const orderRes = await axios.post(`${API_URL}/orders/init`, { client_id: clientData.clientId });
       const orderId = orderRes.data.id;
 
       await axios.post(`${API_URL}/order_items`, { order_id: orderId, product_id: productId, quantity: 1 });
 
-      // حفظ الطلب المعلق
-      clientsCache.set(`${chatId}_pendingOrder`, orderId);
-
-      // طلب تأكيد الهاتف
-      await bot.sendMessage(chatId, "📱 يرجى تأكيد طلبك بمشاركة رقم هاتفك:", {
-        reply_markup: {
-          keyboard: [[{ text: "📲 مشاركة رقمي", request_contact: true }]],
-          one_time_keyboard: true,
-          resize_keyboard: true
+      // زر لتأكيد الطلب
+      await bot.sendMessage(
+        chatId,
+        `✅ تم إضافة المنتج إلى طلبك.\n🎉 رقم الطلب: ${orderId}\n👤 ${clientData.owner_name}\n📱 ${clientData.phone}\n\nالرجاء تأكيد الطلب:`,
+        {
+          reply_markup: {
+            inline_keyboard: [[{ text: "تأكيد الطلب ✅", callback_data: `confirm_${orderId}` }]]
+          }
         }
-      });
+      );
 
       bot.answerCallbackQuery(callbackQuery.id);
     } catch (err) {
@@ -128,41 +129,34 @@ bot.on('callback_query', async (callbackQuery) => {
       bot.answerCallbackQuery(callbackQuery.id);
     }
   }
-});
 
-// استقبال رقم الهاتف من العميل
-bot.on('contact', async (msg) => {
-  const chatId = msg.chat.id;
-  const phone = msg.contact.phone_number;
-  const orderId = clientsCache.get(`${chatId}_pendingOrder`);
-  const client = clientsCache.get(`${chatId}_client`);
+  // تأكيد الطلب
+  if (data.startsWith('confirm_')) {
+    const orderId = parseInt(data.split('_')[1]);
+    try {
+      const clientData = clientsCache.get(chatId);
+      if (!clientData) throw new Error("Client not found in cache");
 
-  if (!orderId || !client) return;
+      // تحديث رقم الهاتف (ثابت أو من مشاركة رقم مستقبلاً)
+      const fixedPhone = "+963933210196";
+      await axios.patch(`${API_URL}/clients/updatePhone`, {
+        id: clientData.clientId,
+        phone: fixedPhone
+      });
 
-  try {
-    // تحديث العميل في قاعدة البيانات برقم الهاتف
-    await axios.patch(`${API_URL}/clients/updatePhone`, {
-      id: client.id,
-      phone: phone
-    });
+      await bot.sendMessage(
+        chatId,
+        `✅ تم تأكيد طلبك بنجاح.\n🎉 رقم الطلب: ${orderId}\n👤 ${clientData.owner_name}\n📱 هاتفك: ${fixedPhone}\n🚚 سيتم التواصل معك قريبًا.`
+      );
 
-    // تأكيد الطلب
-    await axios.post(`${API_URL}/orders/confirm`, { order_id: orderId });
-
-    // رسالة تأكيد للعميل
-    await bot.sendMessage(chatId, `✅ تم تأكيد طلبك بنجاح.\n🎉 رقم الطلب: ${orderId}\n👤 ${client.owner_name}\n📱 هاتفك: ${phone}\n🚚 سيتم التواصل معك قريبًا.`);
-
-    // إشعار الموزع
-    await bot.sendMessage(distributorChatId, `📦 طلب جديد مؤكد!\n🎉 رقم الطلب: ${orderId}\n👤 العميل: ${client.owner_name}\n📱 الهاتف: ${phone}`);
-
-    // تنظيف الكاش
-    clientsCache.delete(`${chatId}_pendingOrder`);
-  } catch (err) {
-    console.error(err.response?.data || err.message);
-    bot.sendMessage(chatId, "⚠️ حدث خطأ أثناء تأكيد الطلب.");
+      bot.answerCallbackQuery(callbackQuery.id);
+    } catch (err) {
+      console.error(err.response?.data || err.message);
+      bot.sendMessage(chatId, "⚠️ حدث خطأ أثناء تأكيد الطلب.");
+      bot.answerCallbackQuery(callbackQuery.id);
+    }
   }
 });
-
 // تشغيل السيرفر
 app.listen(PORT, async () => {
   console.log(`🚀 Server running on port ${PORT}`);
@@ -175,3 +169,4 @@ app.listen(PORT, async () => {
     console.error("❌ Error setting webhook:", err.message);
   }
 });
+
