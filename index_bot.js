@@ -24,9 +24,11 @@ app.post(`/webhook/${TOKEN}`, (req, res) => {
 // تخزين مؤقت للـ clientId لكل chatId لتقليل الطلبات
 const clientsCache = new Map();
 
+// التعامل مع الرسائل
 bot.on('message', async (msg) => {
   const chatId = msg.chat.id;
   const keyword = msg.text?.trim();
+
   if (!keyword) return bot.sendMessage(chatId, "أرسل كلمة للبحث 🔍 مثال: سكر");
 
   try {
@@ -38,6 +40,7 @@ bot.on('message', async (msg) => {
       address: "غير محدد"
     };
 
+    // تحقق من cache أولاً
     let clientId = clientsCache.get(chatId);
 
     if (!clientId) {
@@ -48,15 +51,13 @@ bot.on('message', async (msg) => {
     }
 
     // رسالة ترحيب دائمًا
-    await bot.sendMessage(chatId, `👋 أهلا ${client.owner_name || "عميل"}، مرحبًاظظ بك في متجرنا!`);
+    await bot.sendMessage(chatId, `👋 أهلا ${client.owner_name || "عميل"}، مرحبًا بك في متجرنا!`);
 
     // البحث عن المنتجات
     const response = await axios.get(`${API_URL}/products/search?keyword=${encodeURIComponent(keyword)}`);
     const products = response.data;
 
-    if (!products.length) {
-      return bot.sendMessage(chatId, `🚫 لا يوجد نتائج لكلمة: ${keyword}`);
-    }
+    if (!products.length) return bot.sendMessage(chatId, `🚫 لا يوجد نتائج لكلمة: ${keyword}`);
 
     for (const product of products) {
       const caption = `🛒 *${product.product_name}*\n📦 ${product.category}\n💵 ${product.price} ل.س`;
@@ -80,8 +81,8 @@ bot.on('message', async (msg) => {
     }
 
   } catch (err) {
-    console.error(err.response?.data || err.message);
-    bot.sendMessage(chatId, "⚠️ حدث خطأ في البحث، حاول لاحقًا.");
+    console.error(err.response?.data || err.message || err);
+    bot.sendMessage(chatId, "⚠️ حدث خطأ أثناء معالجة طلبك، حاول لاحقًا.");
   }
 });
 
@@ -98,16 +99,24 @@ bot.on('callback_query', async (callbackQuery) => {
       const clientId = clientsCache.get(chatId);
       if (!clientId) throw new Error("Client not found in cache");
 
+      // إنشاء الطلب
       const orderRes = await axios.post(`${API_URL}/orders/init`, { client_id: clientId });
       const orderId = orderRes.data.id;
 
+      // إضافة المنتج للطلب
       await axios.post(`${API_URL}/order_items`, { order_id: orderId, product_id: productId, quantity: 1 });
 
-      await bot.sendMessage(chatId, `✅ تم إضافة المنتج إلى طلبك بنجاح.\n🎉 رقم الطلب: ${orderId}\n🚚 سيتم التواصل معك للتوصيل.`);
+      // جلب بيانات العميل لتضمينها في إشعار التوصيل
+      const clientRes = await axios.get(`${API_URL}/clients/${clientId}`);
+      const clientData = clientRes.data;
+
+      await bot.sendMessage(chatId,
+        `✅ تم إضافة المنتج إلى طلبك بنجاح.\n🎉 رقم الطلب: ${orderId}\n👤 العميل: ${clientData.owner_name || "غير معروف"}\n📱 الهاتف: ${clientData.phone}\n🚚 سيتم التواصل معك للتوصيل.`);
 
       bot.answerCallbackQuery(callbackQuery.id);
+
     } catch (err) {
-      console.error(err.response?.data || err.message);
+      console.error(err.response?.data || err.message || err);
       bot.sendMessage(chatId, "⚠️ حدث خطأ أثناء تسجيل الطلب، حاول لاحقًا.");
       bot.answerCallbackQuery(callbackQuery.id);
     }
@@ -126,4 +135,3 @@ app.listen(PORT, async () => {
     console.error("❌ Error setting webhook:", err.message);
   }
 });
-
