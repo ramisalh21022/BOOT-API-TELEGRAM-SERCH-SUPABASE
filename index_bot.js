@@ -31,19 +31,7 @@ bot.on('message', async (msg) => {
   if (msg.contact) {
     const phone = msg.contact.phone_number;
 
-    // تحديث رقم الهاتف في قاعدة البيانات
-    try {
-      const clientId = clientsCache.get(chatId);
-      if (clientId) {
-        await axios.patch(`${API_URL}/clients/${clientId}`, { phone });
-        await bot.sendMessage(chatId, `📱 تم تسجيل رقم هاتفك: ${phone}`);
-      }
-    } catch (err) {
-      console.error(err.response?.data || err.message);
-      bot.sendMessage(chatId, "⚠️ حدث خطأ أثناء حفظ رقم الهاتف.");
-    }
-    return;
-  }
+   
 
   const keyword = msg.text?.trim();
   if (!keyword) return bot.sendMessage(chatId, "أرسل كلمة للبحث 🔍 مثال: سكر");
@@ -150,4 +138,5 @@ app.listen(PORT, async () => {
     console.error("❌ Error setting webhook:", err.message);
   }
 });
+
 
